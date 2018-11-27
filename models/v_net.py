@@ -6,7 +6,7 @@ import torch.optim as optim
 import numpy as np
 from dotenv import load_dotenv
 
-from .utils import weighted_cross_entropy, soft_dice_score, dice_loss
+from .utils import weighted_cross_entropy, soft_dice_score
 
 
 load_dotenv('./.env')
@@ -39,8 +39,7 @@ class VNet(nn.Module):
         self.out_shape = (batch_size, class_num, depth, width, height)
         self.batch_size = batch_size
         self.comet_experiment = None
-        
-        
+
     def fit_generator(self, training_datagenerator, validation_datagenerator, **kwargs):
         if 'experiment' in kwargs:
             self.comet_experiment = kwargs['experiment']
@@ -91,11 +90,11 @@ class VNet(nn.Module):
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
         self.opt.step()
         return crossentropy_loss.cpu().data.numpy(), dice_score.cpu().data.numpy()
-                     
+
     def save(self):
         torch.save(self.model, os.path.join(self.result_path, 'model'))
         print(f'model save to {self.result_path}')
-    
+
     def _validate(self, validation_datagenerator):
         self.model.eval()
         # get data
@@ -114,7 +113,6 @@ class VNet(nn.Module):
         crossentropy_loss = weighted_cross_entropy(pre, label, class_weight)
         dice_score = soft_dice_score(pre, label)
         return crossentropy_loss.cpu().data.numpy(), dice_score.cpu().data.numpy()
-        
 
 
 ###########################################################
@@ -123,7 +121,7 @@ class VNet(nn.Module):
 #  output  [batch_num,             2,  D,   H,   W]       #
 ###########################################################
 class Vnet_net(nn.Module):
-    def __init__(self, 
+    def __init__(self,
                  input_channel=1,
                  duplication_num=8,
                  kernel_size=5,
@@ -219,7 +217,7 @@ class UpConv(nn.Module):
         x1 = self.activation(x1)
         x1 = self.batch_norm(x1)
         if(x1.shape != x2.shape):
-            # this case will only happend for 
+            # this case will only happend for
             # x1 [N, C, D-1, H-1, W-1]
             # x2 [N, C, D,   H,   W  ]
             x1 = self.padding(x1)
@@ -244,12 +242,13 @@ class Conv_N_time(nn.Module):
         # define layers
         self.activation = Activation()
         for _ in range(N):
-            conv = nn.Conv3d(channel_num, channel_num, kernel_size=kernel_size, padding=kernel_size//2)
+            conv = nn.Conv3d(channel_num, channel_num, kernel_size=kernel_size,
+                             padding=kernel_size // 2)
             self.convs.append(conv)
         for _ in range(N):
             norm = nn.BatchNorm3d(channel_num)
             self.batchnorms.append(norm)
-    
+
     def forward(self, x):
         for conv, batchnorm in zip(self.convs, self.batchnorms):
             x = conv(x)
@@ -266,10 +265,11 @@ class Conv_N_time(nn.Module):
 class Duplicate(nn.Module):
     def __init__(self, input_channel, duplication_num, kernel_size):
         super(Duplicate, self).__init__()
-        self.duplicate = nn.Conv3d(input_channel, duplication_num, kernel_size=kernel_size, padding=kernel_size//2)
+        self.duplicate = nn.Conv3d(input_channel, duplication_num,
+                                   kernel_size=kernel_size, padding=kernel_size // 2)
         self.activation = Activation()
         self.batch_norm = nn.BatchNorm3d(duplication_num)
-        
+
     def forward(self, inp):
         x = self.duplicate(inp)
         x = self.activation(x)
@@ -286,7 +286,7 @@ class Out_layer(nn.Module):
     def __init__(self, input_channel):
         super(Out_layer, self).__init__()
         self.conv = nn.Conv3d(input_channel, 2, kernel_size=1)
-    
+
     def forward(self, x):
         x = self.conv(x)
         return x
@@ -303,8 +303,3 @@ def check_shape(shape, n_layer):
         raise AssertionError('height({}) must be a multiple of 2^n_layer({})'.format(D, divider))
     if (W % divider != 0):
         raise AssertionError('width({}) must be a multiple of 2^n_layer({})'.format(D, divider))
-# # for testing purpose    
-# model = Vnet().cuda()
-# x = torch.zeros((1, 1, 128, 128, 128)).cuda()
-# y = model(x)
-# print(y.shape)
