@@ -7,6 +7,7 @@ import numpy as np
 from dotenv import load_dotenv
 
 from .utils import weighted_cross_entropy, soft_dice_score
+from .base import ModelBase
 
 
 load_dotenv('./.env')
@@ -17,7 +18,7 @@ def Activation():
     return nn.ReLU()
 
 
-class VNet(nn.Module):
+class VNet(ModelBase):
     def __init__(
             self,
             channels: int = 1,
@@ -27,52 +28,25 @@ class VNet(nn.Module):
             metadata_dim: int = 0,
             class_num: int = 2,
             lr: float = 1e-4,
-            batch_size: int = 1,
+            duplication_num: int = 8,
+            kernel_size: int = 5,
+            conv_time: int = 2,
+            n_layer: int = 4,
         ):
         super(VNet, self).__init__()
-        self.model = Vnet_net().cuda()
+        self.model = Vnet_net(channels, duplication_num, kernel_size,
+                              conv_time, n_layer, class_num).cuda()
         self.opt = optim.Adam(params=self.model.parameters(), lr=lr)
         EXP_ID = os.environ.get('EXP_ID')
         self.result_path = os.path.join(RESULT_DIR_BASE, EXP_ID)
         # def const
-        self.data_shape = (batch_size, channels, depth, width, height)
-        self.out_shape = (batch_size, class_num, depth, width, height)
-        self.batch_size = batch_size
         self.comet_experiment = None
 
-    def fit_generator(self, training_datagenerator, validation_datagenerator, **kwargs):
-        if 'experiment' in kwargs:
-            self.comet_experiment = kwargs['experiment']
-        for i_epoch in range(100000):
-            crossentropy_loss, dice_score = self.train_on_batch(training_datagenerator)
-            # visualize
-            verbose_epoch_num = kwargs['verbose_epoch_num']
-            if i_epoch % verbose_epoch_num == 0:
-                print(
-                    f'epoch: {i_epoch}',
-                    f', crossentropy_loss: {crossentropy_loss}',
-                    f', dice_score: {dice_score}',
-                )
-                self.save()
-                val_crossentropy_loss, val_dice_score = self._validate(validation_datagenerator)
-                if self.comet_experiment is not None:
-                    self.comet_experiment.log_multiple_metrics({
-                        'crossentropy_loss': crossentropy_loss,
-                        'dice_score': dice_score,
-                    }, prefix='training', step=i_epoch
-                    )
-                    self.comet_experiment.log_multiple_metrics({
-                        'crossentropy_loss': val_crossentropy_loss,
-                        'dice_score': val_dice_score,
-                    }, prefix='validate', step=i_epoch
-                    )
-
-    def train_on_batch(self, training_datagenerator):
+    def train_on_batch(self, training_datagenerator, batch_size):
         # get data
-        batch_data = training_datagenerator(batch_size=self.batch_size)
+        batch_data = training_datagenerator(batch_size=batch_size)
         data, label = batch_data['volume'], batch_data['label']
-        data = torch.from_numpy(data.reshape(self.data_shape)).cuda().float()
-        label = label.reshape(self.out_shape)
+        data = torch.from_numpy(data).cuda().float()
         class_weight = np.divide(
             1., np.mean(label, axis=(0, 2, 3, 4)),
             out=np.ones(label.shape[1]),
@@ -90,29 +64,19 @@ class VNet(nn.Module):
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
         self.opt.step()
         return crossentropy_loss.cpu().data.numpy(), dice_score.cpu().data.numpy()
-
-    def save(self):
-        torch.save(self.model, os.path.join(self.result_path, 'model'))
-        print(f'model save to {self.result_path}')
-
-    def _validate(self, validation_datagenerator):
+    
+    def fit(self, training_data, validation_data, **kwargs):
+        print("not implemented")
+        
+    def fit_dataloader(self, get_training_dataloader, get_validation_dataloader, **kwargs):
+        print("not implemented")
+        
+    def predict(self, test_data, batch_size, **kwargs):
         self.model.eval()
-        # get data
-        batch_data = validation_datagenerator(batch_size=self.batch_size)
-        data, label = batch_data['volume'], batch_data['label']
-        data = torch.from_numpy(data.reshape(self.data_shape)).cuda().float()
-        label = label.reshape(self.out_shape)
-        class_weight = np.divide(
-            1., np.mean(label, axis=(0, 2, 3, 4)),
-            out=np.ones(label.shape[1]),
-            where=np.mean(label, axis=(0, 2, 3, 4)) != 0,
-        )
-        label = torch.from_numpy(label).cuda().float()
-        # predict
+        data = test_data['volume']
+        data = torch.from_numpy(data).cuda().float()
         pre = self.model(data)
-        crossentropy_loss = weighted_cross_entropy(pre, label, class_weight)
-        dice_score = soft_dice_score(pre, label)
-        return crossentropy_loss.cpu().data.numpy(), dice_score.cpu().data.numpy()
+        return pre.cpu().data.numpy()
 
 
 ###########################################################
@@ -126,7 +90,8 @@ class Vnet_net(nn.Module):
                  duplication_num=8,
                  kernel_size=5,
                  conv_time=2,
-                 n_layer=4
+                 n_layer=4,
+                 class_num=2
                  ):
         super(Vnet_net, self).__init__()
         # To work properly, kernel_size must be odd
@@ -149,7 +114,7 @@ class Vnet_net(nn.Module):
         n_channel = np.power(2, n_layer - 1) * duplication_num
         upConv = UpConv(n_channel * 2, n_channel, kernel_size, conv_time)
         self.up.append(upConv)
-        self.output_layer = Out_layer(duplication_num * 2)
+        self.output_layer = Out_layer(duplication_num * 2, class_num)
 
     def forward(self, inp):
         # check
@@ -283,23 +248,10 @@ class Duplicate(nn.Module):
 #  output  [batch_num, 2,                  D,   H,   W]   #
 ###########################################################
 class Out_layer(nn.Module):
-    def __init__(self, input_channel):
+    def __init__(self, input_channel, class_num):
         super(Out_layer, self).__init__()
-        self.conv = nn.Conv3d(input_channel, 2, kernel_size=1)
+        self.conv = nn.Conv3d(input_channel, class_num, kernel_size=1)
 
     def forward(self, x):
         x = self.conv(x)
         return x
-
-
-def check_shape(shape, n_layer):
-    divider = np.power(2, n_layer)
-    D = shape[2]
-    H = shape[3]
-    W = shape[4]
-    if (D % divider != 0):
-        raise AssertionError('depth({}) must be a multiple of 2^n_layer({})'.format(D, divider))
-    if (H % divider != 0):
-        raise AssertionError('height({}) must be a multiple of 2^n_layer({})'.format(D, divider))
-    if (W % divider != 0):
-        raise AssertionError('width({}) must be a multiple of 2^n_layer({})'.format(D, divider))
