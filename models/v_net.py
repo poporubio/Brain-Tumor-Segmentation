@@ -1,10 +1,16 @@
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
+from dotenv import load_dotenv
 
-from .utils import weighted_cross_entropy, soft_dice_score
+from .utils import weighted_cross_entropy, soft_dice_score, dice_loss
+
+
+load_dotenv('./.env')
+RESULT_DIR_BASE = os.environ.get('RESULT_DIR')
 
 
 def Activation():
@@ -21,27 +27,93 @@ class VNet(nn.Module):
             metadata_dim: int = 0,
             class_num: int = 2,
             lr: float = 1e-4,
+            batch_size: int = 1,
         ):
         super(VNet, self).__init__()
         self.model = Vnet_net().cuda()
         self.opt = optim.Adam(params=self.model.parameters(), lr=lr)
+        EXP_ID = os.environ.get('EXP_ID')
+        self.result_path = os.path.join(RESULT_DIR_BASE, EXP_ID)
+        # def const
+        self.data_shape = (batch_size, channels, depth, width, height)
+        self.out_shape = (batch_size, class_num, depth, width, height)
+        self.batch_size = batch_size
+        self.comet_experiment = None
         
-    def fit_dataloader(self, get_training_dataloader, get_validation_dataloader, **kwargs):
-        batch_size = 1
-        training_dataloader = get_training_dataloader(batch_size, shuffle=True, num_workers=0)
-        for i_batch, sampled_batch in enumerate(training_dataloader):
-            self.opt.zero_grad()
-            # sampled_batch['volume']
-            data = sampled_batch['volume'].reshape(1, 1, 200, 200, 200).cuda().float()
-            label = sampled_batch['label'].reshape(1, 2, 200, 200, 200).cuda().float()
-            pre = self.model(data)
-            crossentropy_loss = weighted_cross_entropy(pre, label)
-            dice_score = soft_dice_score(pre, label)
-            total_loss = crossentropy_loss - torch.log(dice_score)
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
-            total_loss.backward()
-            self.opt.step()
-            print(dice_score)
+        
+    def fit_generator(self, training_datagenerator, validation_datagenerator, **kwargs):
+        if 'experiment' in kwargs:
+            self.comet_experiment = kwargs['experiment']
+        for i_epoch in range(100000):
+            crossentropy_loss, dice_score = self.train_on_batch(training_datagenerator)
+            # visualize
+            verbose_epoch_num = kwargs['verbose_epoch_num']
+            if i_epoch % verbose_epoch_num == 0:
+                print(
+                    f'epoch: {i_epoch}',
+                    f', crossentropy_loss: {crossentropy_loss}',
+                    f', dice_score: {dice_score}',
+                )
+                self.save()
+                val_crossentropy_loss, val_dice_score = self._validate(validation_datagenerator)
+                if self.comet_experiment is not None:
+                    self.comet_experiment.log_multiple_metrics({
+                        'crossentropy_loss': crossentropy_loss,
+                        'dice_score': dice_score,
+                    }, prefix='training', step=i_epoch
+                    )
+                    self.comet_experiment.log_multiple_metrics({
+                        'crossentropy_loss': val_crossentropy_loss,
+                        'dice_score': val_dice_score,
+                    }, prefix='validate', step=i_epoch
+                    )
+
+    def train_on_batch(self, training_datagenerator):
+        # get data
+        batch_data = training_datagenerator(batch_size=self.batch_size)
+        data, label = batch_data['volume'], batch_data['label']
+        data = torch.from_numpy(data.reshape(self.data_shape)).cuda().float()
+        label = label.reshape(self.out_shape)
+        class_weight = np.divide(
+            1., np.mean(label, axis=(0, 2, 3, 4)),
+            out=np.ones(label.shape[1]),
+            where=np.mean(label, axis=(0, 2, 3, 4)) != 0,
+        )
+        label = torch.from_numpy(label).cuda().float()
+        # start predict
+        self.model.train()
+        pre = self.model(data)
+        crossentropy_loss = weighted_cross_entropy(pre, label, class_weight)
+        dice_score = soft_dice_score(pre, label)
+        total_loss = crossentropy_loss - torch.log(dice_score)
+        self.opt.zero_grad()
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
+        self.opt.step()
+        return crossentropy_loss.cpu().data.numpy(), dice_score.cpu().data.numpy()
+                     
+    def save(self):
+        torch.save(self.model, os.path.join(self.result_path, 'model'))
+        print(f'model save to {self.result_path}')
+    
+    def _validate(self, validation_datagenerator):
+        self.model.eval()
+        # get data
+        batch_data = validation_datagenerator(batch_size=self.batch_size)
+        data, label = batch_data['volume'], batch_data['label']
+        data = torch.from_numpy(data.reshape(self.data_shape)).cuda().float()
+        label = label.reshape(self.out_shape)
+        class_weight = np.divide(
+            1., np.mean(label, axis=(0, 2, 3, 4)),
+            out=np.ones(label.shape[1]),
+            where=np.mean(label, axis=(0, 2, 3, 4)) != 0,
+        )
+        label = torch.from_numpy(label).cuda().float()
+        # predict
+        pre = self.model(data)
+        crossentropy_loss = weighted_cross_entropy(pre, label, class_weight)
+        dice_score = soft_dice_score(pre, label)
+        return crossentropy_loss.cpu().data.numpy(), dice_score.cpu().data.numpy()
         
 
 
@@ -85,7 +157,6 @@ class Vnet_net(nn.Module):
         # check
         if(inp.dim() != 5):
             raise AssertionError('input must have shape (batch_size, channel, D, H, W)')
-#         check_shape(inp.shape, self.n_layer)
         # start
         x_out = []
         # turn input channel to duplication_num
@@ -101,6 +172,7 @@ class Vnet_net(nn.Module):
             x = self.up[n_up](x, x_out[n_up])
         # out_layer
         x = self.output_layer(x)
+        x = F.softmax(x, dim=1)
         return x
 
 
@@ -121,8 +193,9 @@ class DnConv(nn.Module):
     def forward(self, x):
         x = self.dnconv(x)
         x = self.activation(x)
-        x = self.batch_norm(x)
-        x = self.conv_N_time(x)
+        x1 = self.batch_norm(x)
+        x = self.conv_N_time(x1)
+        x = x + x1
         return x
 
 
@@ -151,7 +224,8 @@ class UpConv(nn.Module):
             # x2 [N, C, D,   H,   W  ]
             x1 = self.padding(x1)
         x = torch.cat((x1, x2), 1)
-        x = self.conv_N_time(x)
+        x1 = self.conv_N_time(x)
+        x = x1 + x
         return x
 
 
@@ -196,8 +270,8 @@ class Duplicate(nn.Module):
         self.activation = Activation()
         self.batch_norm = nn.BatchNorm3d(duplication_num)
         
-    def forward(self, input):
-        x = self.duplicate(input)
+    def forward(self, inp):
+        x = self.duplicate(inp)
         x = self.activation(x)
         x = self.batch_norm(x)
         return x

@@ -62,12 +62,10 @@ class Model2DBase(ModelBase):
         self.metadata_dim = metadata_dim
         self.class_num = class_num
         self.comet_experiment = None
-
         self.model = None
         self.opt = None
         EXP_ID = os.environ.get('EXP_ID')
         self.result_path = os.path.join(RESULT_DIR_BASE, EXP_ID)
-
         self.image_augmentor = ImageAugmentor(
             channels,
             height,
@@ -79,11 +77,9 @@ class Model2DBase(ModelBase):
         print(kwargs)
         batch_size = kwargs['batch_size']
         epoch_num = kwargs['epoch_num']
-
         verbose_epoch_num = kwargs['verbose_epoch_num']
         if 'experiment' in kwargs:
             self.comet_experiment = kwargs['experiment']
-
         for i_epoch in range(epoch_num):
             losses, dice_scores = self.train_on_batch(training_datagenerator, batch_size)
             if i_epoch % verbose_epoch_num == 0:
@@ -116,7 +112,6 @@ class Model2DBase(ModelBase):
             self.model.zero_grad()
             batch_image = image[batch_idx * batch_size: (batch_idx + 1) * batch_size]
             batch_label = label[batch_idx * batch_size: (batch_idx + 1) * batch_size]
-
             class_weights = np.divide(
                 1., np.mean(batch_label, axis=(0, 2, 3)),
                 out=np.ones(batch_label.shape[1]),

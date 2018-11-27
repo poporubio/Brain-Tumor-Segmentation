@@ -54,6 +54,20 @@ def soft_dice_score(pred, tar):
     return dice_score
 
 
+def dice_loss(pre, tar):
+    m1 = pre.view(-1)
+    m2 = tar.view(-1)
+    
+    intersec = torch.sum(pre * tar)
+    m1 = torch.sum(m1 ** 2) 
+    m2 = torch.sum(m2 ** 2) 
+    
+    delta = 2.220446049250313e-16 
+    dice_loss = (2 * intersec) / (m1 + m2 + delta)
+    
+    return dice_loss
+
+
 def normalize_image(batch_image):
     assert(batch_image.ndim == 4)
     std = np.std(batch_image, axis=(1, 2, 3), keepdims=True)
