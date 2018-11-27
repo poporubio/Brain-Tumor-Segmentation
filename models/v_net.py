@@ -64,13 +64,13 @@ class VNet(ModelBase):
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
         self.opt.step()
         return crossentropy_loss.cpu().data.numpy(), dice_score.cpu().data.numpy()
-    
+
     def fit(self, training_data, validation_data, **kwargs):
         print("not implemented")
-        
+
     def fit_dataloader(self, get_training_dataloader, get_validation_dataloader, **kwargs):
         print("not implemented")
-        
+
     def predict(self, test_data, batch_size, **kwargs):
         self.model.eval()
         data = test_data['volume']

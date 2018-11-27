@@ -42,13 +42,13 @@ class ModelBase:
     def load(self, file_path):
         self.model = torch.load(os.path.join(file_path, 'model'))
         print(f'model loaded from {file_path}')
-        
+
     def _validate(self, validation_datagenerator, batch_size):
         batch_data = validation_datagenerator(batch_size=batch_size)
         label = batch_data['label']
         pred = self.predict(batch_data, batch_size)
-        return MetricClass(pred, label).all_metrics() 
-    
+        return MetricClass(pred, label).all_metrics()
+
     def fit_generator(self, training_datagenerator, validation_datagenerator, **kwargs):
         batch_size = kwargs['batch_size']
         epoch_num = kwargs['epoch_num']
@@ -107,35 +107,6 @@ class Model2DBase(ModelBase):
             mode='albumentations',
         )
 
-    def fit_generator(self, training_datagenerator, validation_datagenerator, **kwargs):
-        print(kwargs)
-        batch_size = kwargs['batch_size']
-        epoch_num = kwargs['epoch_num']
-        verbose_epoch_num = kwargs['verbose_epoch_num']
-        if 'experiment' in kwargs:
-            self.comet_experiment = kwargs['experiment']
-        for i_epoch in range(epoch_num):
-            losses, dice_scores = self.train_on_batch(training_datagenerator, batch_size)
-            t_loss = np.mean(losses)
-            t_score = np.mean(dice_scores)
-            if i_epoch % verbose_epoch_num == 0:
-                self.log_to_comet(i_epoch, t_loss, t_score)
-                
-
-                self.save()
-                metrics = self._validate(
-                    validation_datagenerator, batch_size
-                )
-                if self.comet_experiment is not None:
-                    self.comet_experiment.log_multiple_metrics({
-                        'crossentropy_loss': np.mean(losses),
-                        'dice_score': np.mean(dice_scores),
-                    }, prefix='training', step=i_epoch
-                    )
-                    self.comet_experiment.log_multiple_metrics(
-                        metrics, prefix='validation', step=i_epoch
-                    )
-
     def train_on_batch(self, training_datagenerator, batch_size):
         image, label = self._get_augmented_image_and_label(datagenerator=training_datagenerator)
         losses = []
@@ -165,10 +136,10 @@ class Model2DBase(ModelBase):
 
             losses.append(crossentropy_loss.item())
             dice_scores.append(dice_score.item())
-            
+
         losses = np.mean(losses)
         dice_scores = np.mean(dice_scores)
-        
+
         return losses, dice_scores
 
     def _get_augmented_image_and_label(self, **kwargs):
