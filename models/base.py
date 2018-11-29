@@ -26,10 +26,34 @@ RESULT_DIR_BASE = os.environ.get('RESULT_DIR')
 
 
 class ModelBase:
+    def __init__(
+            self,
+            channels: int = 1,
+            depth: int = 200,
+            height: int = 200,
+            width: int = 200,
+            metadata_dim: int = 0,
+            class_num: int = 2,
+        ):
+        self.data_channels = channels
+        self.data_depth = depth
+        self.data_height = height
+        self.data_width = width
+        self.metadata_dim = metadata_dim
+        self.class_num = class_num
+        self.comet_experiment = None
+        self.model = None
+        self.opt = None
+        EXP_ID = os.environ.get('EXP_ID')
+        self.result_path = os.path.join(RESULT_DIR_BASE, EXP_ID)
+ 
     def fit(self, training_data, validation_data, **kwargs):
         raise NotImplementedError('fit not implemented')
 
     def fit_dataloader(self, get_training_dataloader, get_validation_dataloader, **kwargs):
+        raise NotImplementedError('fit_dataloader not implemented')
+        
+    def train_on_batch(self, training_datagenerator, batch_size):
         raise NotImplementedError('fit_dataloader not implemented')
 
     def predict(self, test_data, **kwargs):
@@ -46,7 +70,7 @@ class ModelBase:
     def _validate(self, validation_datagenerator, batch_size):
         batch_data = validation_datagenerator(batch_size=batch_size)
         label = batch_data['label']
-        pred = self.predict(batch_data, batch_size)
+        pred = self.predict(batch_data, batch_size=batch_size)
         return MetricClass(pred, label).all_metrics()
 
     def fit_generator(self, training_datagenerator, validation_datagenerator, **kwargs):
@@ -89,17 +113,8 @@ class Model2DBase(ModelBase):
             metadata_dim: int = 0,
             class_num: int = 2,
         ):
-        self.data_channels = channels
-        self.data_depth = depth
-        self.data_height = height
-        self.data_width = width
-        self.metadata_dim = metadata_dim
-        self.class_num = class_num
-        self.comet_experiment = None
-        self.model = None
-        self.opt = None
-        EXP_ID = os.environ.get('EXP_ID')
-        self.result_path = os.path.join(RESULT_DIR_BASE, EXP_ID)
+        super(Model2DBase, self).__init__()
+
         self.image_augmentor = ImageAugmentor(
             channels,
             height,

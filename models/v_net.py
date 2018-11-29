@@ -34,47 +34,42 @@ class VNet(ModelBase):
             n_layer: int = 4,
         ):
         super(VNet, self).__init__()
-        self.model = Vnet_net(channels, duplication_num, kernel_size,
-                              conv_time, n_layer, class_num).cuda()
-        self.opt = optim.Adam(params=self.model.parameters(), lr=lr)
-        EXP_ID = os.environ.get('EXP_ID')
-        self.result_path = os.path.join(RESULT_DIR_BASE, EXP_ID)
-        # def const
-        self.comet_experiment = None
 
+        use_cuda = torch.cuda.is_available()
+        self.device = torch.device("cuda" if use_cuda else "cpu")
+
+        self.model = Vnet_net(channels, duplication_num, kernel_size,
+                              conv_time, n_layer, class_num).to(self.device)
+        self.opt = optim.Adam(params=self.model.parameters(), lr=lr)
+        
     def train_on_batch(self, training_datagenerator, batch_size):
-        # get data
         batch_data = training_datagenerator(batch_size=batch_size)
         data, label = batch_data['volume'], batch_data['label']
-        data = torch.from_numpy(data).cuda().float()
+        data = torch.from_numpy(data).to(self.device).float()
         class_weight = np.divide(
             1., np.mean(label, axis=(0, 2, 3, 4)),
             out=np.ones(label.shape[1]),
             where=np.mean(label, axis=(0, 2, 3, 4)) != 0,
         )
-        label = torch.from_numpy(label).cuda().float()
-        # start predict
+        label = torch.from_numpy(label).to(self.device).float()
+
         self.model.train()
         pre = self.model(data)
         crossentropy_loss = weighted_cross_entropy(pre, label, class_weight)
         dice_score = soft_dice_score(pre, label)
         total_loss = crossentropy_loss - torch.log(dice_score)
+
         self.opt.zero_grad()
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.5)
         self.opt.step()
+
         return crossentropy_loss.cpu().data.numpy(), dice_score.cpu().data.numpy()
-
-    def fit(self, training_data, validation_data, **kwargs):
-        print("not implemented")
-
-    def fit_dataloader(self, get_training_dataloader, get_validation_dataloader, **kwargs):
-        print("not implemented")
 
     def predict(self, test_data, batch_size, **kwargs):
         self.model.eval()
         data = test_data['volume']
-        data = torch.from_numpy(data).cuda().float()
+        data = torch.from_numpy(data).to(self.device).float()
         pre = self.model(data)
         return pre.cpu().data.numpy()
 
@@ -95,13 +90,13 @@ class Vnet_net(nn.Module):
                  ):
         super(Vnet_net, self).__init__()
         # To work properly, kernel_size must be odd
-        if (kernel_size % 2 == 0):
+        if kernel_size % 2 == 0:
             raise AssertionError('kernel_size({}) must be odd'.format(kernel_size))
         self.n_layer = n_layer
-        # define list
+
         self.down = nn.ModuleList()
         self.up = nn.ModuleList()
-        # layer
+
         self.duplicate = Duplicate(input_channel, duplication_num, kernel_size)
         for i in range(n_layer):
             n_channel = np.power(2, i) * duplication_num
@@ -117,23 +112,23 @@ class Vnet_net(nn.Module):
         self.output_layer = Out_layer(duplication_num * 2, class_num)
 
     def forward(self, inp):
-        # check
-        if(inp.dim() != 5):
-            raise AssertionError('input must have shape (batch_size, channel, D, H, W)')
-        # start
+        if inp.dim() != 5:
+            raise AssertionError('input must have shape (batch_size, channel, D, H, W),\
+                                 but get {}'.format(inp.shape))
+
         x_out = []
-        # turn input channel to duplication_num
+
         x = self.duplicate(inp)
         x_out.append(x)
-        # down conv
-        for i in range(self.n_layer):
-            x = self.down[i](x)
+
+        for down_layer in self.down:
+            x = down_layer(x)
             x_out.append(x)
-        # up conv
-        for i in range(self.n_layer):
-            n_up = self.n_layer - i - 1
-            x = self.up[n_up](x, x_out[n_up])
-        # out_layer
+
+        x_out = x_out[:-1]
+        for x_down, u in zip(x_out[::-1], self.up[::-1]):
+            x = u(x, x_down)
+
         x = self.output_layer(x)
         x = F.softmax(x, dim=1)
         return x
@@ -181,7 +176,7 @@ class UpConv(nn.Module):
         x1 = self.upconv(x1)
         x1 = self.activation(x1)
         x1 = self.batch_norm(x1)
-        if(x1.shape != x2.shape):
+        if x1.shape != x2.shape:
             # this case will only happend for
             # x1 [N, C, D-1, H-1, W-1]
             # x2 [N, C, D,   H,   W  ]
@@ -200,17 +195,15 @@ class UpConv(nn.Module):
 class Conv_N_time(nn.Module):
     def __init__(self, channel_num, kernel_size, N):
         super(Conv_N_time, self).__init__()
-        # define list
+
         self.convs = nn.ModuleList()
         self.batchnorms = nn.ModuleList()
-        self.conv_times = N
-        # define layers
+
         self.activation = Activation()
         for _ in range(N):
             conv = nn.Conv3d(channel_num, channel_num, kernel_size=kernel_size,
                              padding=kernel_size // 2)
             self.convs.append(conv)
-        for _ in range(N):
             norm = nn.BatchNorm3d(channel_num)
             self.batchnorms.append(norm)
 
