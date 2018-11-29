@@ -39,9 +39,9 @@ class VNet(ModelBase):
         self.device = torch.device("cuda" if use_cuda else "cpu")
 
         self.model = Vnet_net(channels, duplication_num, kernel_size,
-                              conv_time, n_layer, class_num).to(self.device)
+                            conv_time, n_layer, class_num).to(self.device)
         self.opt = optim.Adam(params=self.model.parameters(), lr=lr)
-        
+
     def train_on_batch(self, training_datagenerator, batch_size):
         batch_data = training_datagenerator(batch_size=batch_size)
         data, label = batch_data['volume'], batch_data['label']
