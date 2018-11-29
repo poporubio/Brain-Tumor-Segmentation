@@ -56,7 +56,7 @@ class ModelBase:
     def train_on_batch(self, training_datagenerator, batch_size):
         raise NotImplementedError('fit_dataloader not implemented')
 
-    def predict(self, test_data, **kwargs):
+    def predict(self, test_data, batch_size, **kwargs):
         raise NotImplementedError('predict not implemented')
 
     def save(self):
@@ -70,7 +70,7 @@ class ModelBase:
     def _validate(self, validation_datagenerator, batch_size):
         batch_data = validation_datagenerator(batch_size=batch_size)
         label = batch_data['label']
-        pred = self.predict(batch_data, batch_size=batch_size)
+        pred = self.predict(batch_data, batch_size)
         return MetricClass(pred, label).all_metrics()
 
     def fit_generator(self, training_datagenerator, validation_datagenerator, **kwargs):
@@ -113,7 +113,14 @@ class Model2DBase(ModelBase):
             metadata_dim: int = 0,
             class_num: int = 2,
         ):
-        super(Model2DBase, self).__init__()
+        super(Model2DBase, self).__init__(
+            channels=channels,
+            depth=depth,
+            height=height,
+            width=width,
+            metadata_dim=metadata_dim,
+            class_num=class_num,
+        )
 
         self.image_augmentor = ImageAugmentor(
             channels,

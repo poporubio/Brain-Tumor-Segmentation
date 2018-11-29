@@ -6,7 +6,7 @@ import torch.optim as optim
 import numpy as np
 from dotenv import load_dotenv
 
-from .utils import weighted_cross_entropy, soft_dice_score
+from .utils import weighted_cross_entropy, soft_dice_score, get_tensor_from_array
 from .base import ModelBase
 
 
@@ -18,7 +18,7 @@ def Activation():
     return nn.ReLU()
 
 
-class VNet(ModelBase):
+class Model3DBase(ModelBase):
     def __init__(
             self,
             channels: int = 1,
@@ -27,31 +27,27 @@ class VNet(ModelBase):
             width: int = 200,
             metadata_dim: int = 0,
             class_num: int = 2,
-            lr: float = 1e-4,
-            duplication_num: int = 8,
-            kernel_size: int = 5,
-            conv_time: int = 2,
-            n_layer: int = 4,
         ):
-        super(VNet, self).__init__()
-
-        use_cuda = torch.cuda.is_available()
-        self.device = torch.device("cuda" if use_cuda else "cpu")
-
-        self.model = Vnet_net(channels, duplication_num, kernel_size,
-                              conv_time, n_layer, class_num).to(self.device)
-        self.opt = optim.Adam(params=self.model.parameters(), lr=lr)
+        super(Model3DBase, self).__init__(
+            channels=channels,
+            depth=depth,
+            height=height,
+            width=width,
+            metadata_dim=metadata_dim,
+            class_num=class_num,
+        )
 
     def train_on_batch(self, training_datagenerator, batch_size):
+
         batch_data = training_datagenerator(batch_size=batch_size)
         data, label = batch_data['volume'], batch_data['label']
-        data = torch.from_numpy(data).to(self.device).float()
+        data = get_tensor_from_array(data)
         class_weight = np.divide(
             1., np.mean(label, axis=(0, 2, 3, 4)),
             out=np.ones(label.shape[1]),
             where=np.mean(label, axis=(0, 2, 3, 4)) != 0,
         )
-        label = torch.from_numpy(label).to(self.device).float()
+        label = get_tensor_from_array(label)
 
         self.model.train()
         pre = self.model(data)
@@ -69,9 +65,40 @@ class VNet(ModelBase):
     def predict(self, test_data, batch_size, **kwargs):
         self.model.eval()
         data = test_data['volume']
-        data = torch.from_numpy(data).to(self.device).float()
+        data = get_tensor_from_array(data)
         pre = self.model(data)
         return pre.cpu().data.numpy()
+
+
+class VNet(Model3DBase):
+    def __init__(
+            self,
+            channels: int = 1,
+            depth: int = 200,
+            height: int = 200,
+            width: int = 200,
+            metadata_dim: int = 0,
+            class_num: int = 2,
+            lr: float = 1e-4,
+            duplication_num: int = 8,
+            kernel_size: int = 5,
+            conv_time: int = 2,
+            n_layer: int = 4,
+        ):
+        super(VNet, self).__init__(
+            channels=channels,
+            depth=depth,
+            height=height,
+            width=width,
+            metadata_dim=metadata_dim,
+            class_num=class_num,
+        )
+
+        self.model = Vnet_net(channels, duplication_num, kernel_size,
+                              conv_time, n_layer, class_num)
+        if torch.cuda.is_available():
+            self.model = self.model.cuda()
+        self.opt = optim.Adam(params=self.model.parameters(), lr=lr)
 
 
 ###########################################################
@@ -80,14 +107,15 @@ class VNet(ModelBase):
 #  output  [batch_num,             2,  D,   H,   W]       #
 ###########################################################
 class Vnet_net(nn.Module):
-    def __init__(self,
-                 input_channel=1,
-                 duplication_num=8,
-                 kernel_size=5,
-                 conv_time=2,
-                 n_layer=4,
-                 class_num=2
-                 ):
+    def __init__(
+            self,
+            channels: int = 1,
+            duplication_num: int = 8,
+            kernel_size: int = 5,
+            conv_time: int = 2,
+            n_layer: int = 4,
+            class_num: int = 2, 
+        ):
         super(Vnet_net, self).__init__()
         # To work properly, kernel_size must be odd
         if kernel_size % 2 == 0:
@@ -97,7 +125,7 @@ class Vnet_net(nn.Module):
         self.down = nn.ModuleList()
         self.up = nn.ModuleList()
 
-        self.duplicate = Duplicate(input_channel, duplication_num, kernel_size)
+        self.duplicate = Duplicate(channels, duplication_num, kernel_size)
         for i in range(n_layer):
             n_channel = np.power(2, i) * duplication_num
             dnConv = DnConv(n_channel, kernel_size, conv_time)
