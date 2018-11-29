@@ -46,13 +46,13 @@ class ModelBase:
         self.opt = None
         EXP_ID = os.environ.get('EXP_ID')
         self.result_path = os.path.join(RESULT_DIR_BASE, EXP_ID)
- 
+
     def fit(self, training_data, validation_data, **kwargs):
         raise NotImplementedError('fit not implemented')
 
     def fit_dataloader(self, get_training_dataloader, get_validation_dataloader, **kwargs):
         raise NotImplementedError('fit_dataloader not implemented')
-        
+
     def train_on_batch(self, training_datagenerator, batch_size):
         raise NotImplementedError('fit_dataloader not implemented')
 
