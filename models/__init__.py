@@ -63,11 +63,21 @@ ModelHub = {
         partial(
             Deepmedic,
             channel_list=[[1, 4], [4, 30], [30, 40], [40, 40], [40, 50], [50 * 2, 150]],
+        ),
+        {
+            **DEFAULT_TRAINING_PARAM,
+            'batch_size': 1,
+        },
+    ),
+    'deepmedic_patch': (
+        partial(
+            Deepmedic,
+            channel_list=[[1, 4], [4, 30], [30, 40], [40, 40], [40, 50], [50 * 2, 150]],
             batch_sampler_id='center_patch3d',
         ),
         {
             **DEFAULT_TRAINING_PARAM,
-            'batch_size': 20,
+            'batch_size': 1,
         },
     ),
 }
